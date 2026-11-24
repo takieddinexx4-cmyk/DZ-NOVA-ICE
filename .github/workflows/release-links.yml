@@ -1,0 +1,81 @@
+name: Publish Direct Links (Website + Windows PC Download)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'dznova-ice-aurora.zip'
+
+permissions:
+  contents: write
+
+jobs:
+  build_and_publish_links:
+    name: Build Windows App & Extract Direct Links
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack ZIP archive
+        shell: pwsh
+        run: |
+          if (Test-Path "dznova-ice-aurora.zip") {
+            Expand-Archive -Path "dznova-ice-aurora.zip" -DestinationPath "app" -Force
+          } else {
+            New-Item -ItemType Directory -Force -Path "app" | Out-Null
+            Copy-Item -Path * -Destination "app" -Recurse -Force -Exclude "app",".git"
+          }
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install & Build Tauri Windows Installer
+        working-directory: ./app
+        run: |
+          npm install
+          npx tauri build
+
+      - name: Prepare Release Assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release-files" | Out-Null
+          Get-ChildItem -Path "app/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Copy-Item -Destination "release-files/DZNOVA-Ice-Aurora-Setup.exe" -Force
+          Get-ChildItem -Path "app/src-tauri/target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue | Copy-Item -Destination "release-files/DZNOVA-Ice-Aurora-Installer.msi" -Force
+
+      - name: Publish GitHub Release (Direct Download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: DZNOVA Ice Aurora Edition — Latest Release
+          body: |
+            ### الروابط المباشرة — Direct Links
+            - 🌐 **الموقع المباشر (Web Platform):** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+            - 💻 **تحميل مباشر لبرنامج الحاسوب (Windows .exe):** https://github.com/${{ github.repository }}/releases/download/latest/DZNOVA-Ice-Aurora-Setup.exe
+            - 📦 **مثبّت ويندوز بديل (.msi):** https://github.com/${{ github.repository }}/releases/download/latest/DZNOVA-Ice-Aurora-Installer.msi
+          files: |
+            release-files/DZNOVA-Ice-Aurora-Setup.exe
+            release-files/DZNOVA-Ice-Aurora-Installer.msi
+          overwrite_files: true
+          make_latest: true
+
+      - name: Output Direct Links in Run Summary
+        shell: pwsh
+        run: |
+          $repo = "${{ github.repository }}"
+          $owner = "${{ github.repository_owner }}"
+          $name = "${{ github.event.repository.name }}"
+          @"
+          ## روابط DZNOVA Ice Aurora المباشرة
+
+          - **رابط الموقع المباشر:** https://$owner.github.io/$name/
+          - **رابط التحميل المباشر للحاسوب (.exe):** https://github.com/$repo/releases/download/latest/DZNOVA-Ice-Aurora-Setup.exe
+          - **رابط التحميل البديل (.msi):** https://github.com/$repo/releases/download/latest/DZNOVA-Ice-Aurora-Installer.msi
+          - **صفحة الإصدارات (Releases):** https://github.com/$repo/releases/latest
+          "@ >> $env:GITHUB_STEP_SUMMARY
