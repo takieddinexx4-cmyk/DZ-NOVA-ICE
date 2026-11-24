@@ -1,0 +1,103 @@
+name: Build & Deploy DZNOVA Ice Aurora (Web + Windows Desktop)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: dznova-ice-aurora
+  cancel-in-progress: true
+
+jobs:
+  build_web:
+    name: Test & Build Web Platform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack ZIP archive
+        run: |
+          if [ -f dznova-ice-aurora.zip ]; then
+            unzip -o dznova-ice-aurora.zip -d app
+          elif [ -f dznova-aurora-glass.zip ]; then
+            unzip -o dznova-aurora-glass.zip -d app
+          else
+            mkdir -p app && cp -r . app/ 2>/dev/null || true
+          fi
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install, Typecheck, Test & Build
+        working-directory: ./app
+        run: |
+          npm install
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./app/dist
+
+  deploy_pages:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build_web
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  build_desktop_windows:
+    name: Build Tauri Windows Desktop Companion
+    runs-on: windows-latest
+    needs: build_web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack ZIP archive
+        shell: pwsh
+        run: |
+          if (Test-Path "dznova-ice-aurora.zip") {
+            Expand-Archive -Path "dznova-ice-aurora.zip" -DestinationPath "app" -Force
+          } else {
+            New-Item -ItemType Directory -Force -Path "app" | Out-Null
+            Copy-Item -Path * -Destination "app" -Recurse -Force -Exclude "app",".git"
+          }
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install & Build Tauri Windows Installer
+        working-directory: ./app
+        run: |
+          npm install
+          npx tauri build
+
+      - name: Upload Windows Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dznova-ice-aurora-windows-companion
+          path: |
+            app/src-tauri/target/release/bundle/nsis/*.exe
+            app/src-tauri/target/release/bundle/msi/*.msi
